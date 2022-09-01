@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
 pub mod crypto_tests;
+pub mod threshold;
 
 pub type CryptoError = ed25519::Error;
 

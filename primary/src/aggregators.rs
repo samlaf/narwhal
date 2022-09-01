@@ -74,6 +74,7 @@ impl CertificatesAggregator {
             return Ok(None);
         }
 
+        // SAM TODO: why do we only push the certificate digest?
         self.certificates.push(certificate.digest());
         self.weight += committee.stake(&origin);
         if self.weight >= committee.quorum_threshold() {
