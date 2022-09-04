@@ -7,7 +7,8 @@ use crate::quorum_waiter::QuorumWaiter;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee, Parameters, WorkerId};
+use config::{Committee, Parameters, ThresholdKeyPair, WorkerId};
+use crypto::threshold::SecretKeyShare;
 use crypto::{Digest, PublicKey};
 use futures::sink::SinkExt as _;
 use log::{error, info, warn};
@@ -44,6 +45,8 @@ pub struct Worker {
     name: PublicKey,
     /// The id of this worker.
     id: WorkerId,
+    /// private key share + shared public keyset for decryption
+    pub threshold_keypair: ThresholdKeyPair,
     /// The committee information.
     committee: Committee,
     /// The configuration parameters.
@@ -56,6 +59,7 @@ impl Worker {
     pub fn spawn(
         name: PublicKey,
         id: WorkerId,
+        threshold_keypair: ThresholdKeyPair,
         committee: Committee,
         parameters: Parameters,
         store: Store,
@@ -64,6 +68,7 @@ impl Worker {
         let worker = Self {
             name,
             id,
+            threshold_keypair,
             committee,
             parameters,
             store,

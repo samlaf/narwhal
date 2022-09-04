@@ -279,6 +279,7 @@ impl Core {
         self.store.write(certificate.digest().to_vec(), bytes).await;
 
         // Check if we have enough certificates to enter a new dag round and propose a header.
+        // append returns 2f+1 certificates (parents) or None
         if let Some(parents) = self
             .certificates_aggregators
             .entry(certificate.round())

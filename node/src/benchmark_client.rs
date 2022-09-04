@@ -119,6 +119,8 @@ impl Client {
                     // NOTE: This log entry is used to compute performance.
                     info!("Sending sample transaction {}", counter);
 
+                    // see https://www.paradigm.xyz/2022/07/consensus-throughput
+                    // to understand sample txs (used for benchmarking)
                     tx.put_u8(0u8); // Sample txs start with 0.
                     tx.put_u64(counter); // This counter identifies the tx.
                 } else {

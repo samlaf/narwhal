@@ -2,9 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use threshold_crypto::{
-    Ciphertext, DecryptionShare, PublicKey, PublicKeySet, PublicKeyShare, SecretKeySet,
-    SecretKeyShare,
+use threshold_crypto::{Ciphertext, DecryptionShare, PublicKeyShare};
+// TODO: might want to abstract these so that we don't expose the underlying crypto_threshold library types
+pub use threshold_crypto::{
+    serde_impl::SerdeSecret, PublicKey, PublicKeySet, SecretKeySet, SecretKeyShare,
 };
 
 // In this example scenario, the `SecretSociety` is the "trusted key dealer". The trusted dealer is

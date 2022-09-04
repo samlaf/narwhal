@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use clap::{crate_name, crate_version, App, AppSettings, ArgMatches, SubCommand};
 use config::Export as _;
 use config::Import as _;
+use config::ThresholdKeyPair;
 use config::{Committee, KeyPair, Parameters, WorkerId};
 use consensus::Consensus;
 use env_logger::Env;
@@ -21,14 +22,22 @@ async fn main() -> Result<()> {
         .about("A research implementation of Narwhal and Tusk.")
         .args_from_usage("-v... 'Sets the level of verbosity'")
         .subcommand(
-            SubCommand::with_name("generate_keys")
+            SubCommand::with_name("generate_keypair")
                 .about("Print a fresh key pair to file")
                 .args_from_usage("--filename=<FILE> 'The file where to print the new key pair'"),
         )
         .subcommand(
+            SubCommand::with_name("generate_threshold_keypair")
+                .about("Print fresh threshold keypair to file")
+                .args_from_usage("--filename=<FILE> 'The file where to print the new threshold key shares'")
+                .args_from_usage("--threshold=<INT> 'The threshold number st (threshold+1)/num_shares needed to decrypt'")
+                .args_from_usage("--node_index=<INT> 'The index of the share to generate'")
+                .args_from_usage("--seed=<INT> 'The seed number to generate the threshold keys'")
+        )
+        .subcommand(
             SubCommand::with_name("run")
                 .about("Run a node")
-                .args_from_usage("--keys=<FILE> 'The file containing the node keys'")
+                .args_from_usage("--keypair=<FILE> 'The file containing the node keypair'")
                 .args_from_usage("--committee=<FILE> 'The file containing committee information'")
                 .args_from_usage("--parameters=[FILE] 'The file containing the node parameters'")
                 .args_from_usage("--store=<PATH> 'The path where to create the data store'")
@@ -36,7 +45,8 @@ async fn main() -> Result<()> {
                 .subcommand(
                     SubCommand::with_name("worker")
                         .about("Run a single worker")
-                        .args_from_usage("--id=<INT> 'The worker id'"),
+                        .args_from_usage("--id=<INT> 'The worker id'")
+                        .args_from_usage("--threshold_keypair=<FILE> 'The file containing the node threshold keypair'")
                 )
                 .setting(AppSettings::SubcommandRequiredElseHelp),
         )
@@ -56,9 +66,29 @@ async fn main() -> Result<()> {
     logger.init();
 
     match matches.subcommand() {
-        ("generate_keys", Some(sub_matches)) => KeyPair::new()
+        ("generate_keypair", Some(sub_matches)) => KeyPair::new()
             .export(sub_matches.value_of("filename").unwrap())
             .context("Failed to generate key pair")?,
+        ("generate_threshold_keypair", Some(sub_matches)) => {
+            let threshold = sub_matches
+                .value_of("threshold")
+                .unwrap()
+                .parse::<usize>()
+                .context("threshold must be an integer")?;
+            let node_index = sub_matches
+                .value_of("node_index")
+                .unwrap()
+                .parse::<usize>()
+                .context("node_index must be an integer")?;
+            let seed = sub_matches
+                .value_of("seed")
+                .unwrap()
+                .parse::<u64>()
+                .context("seed must be an integer")?;
+            ThresholdKeyPair::new(threshold, node_index, seed)
+                .export(sub_matches.value_of("filename").unwrap())
+                .context("Failed to generate threshold keypair")?;
+        }
         ("run", Some(sub_matches)) => run(sub_matches).await?,
         _ => unreachable!(),
     }
@@ -67,12 +97,12 @@ async fn main() -> Result<()> {
 
 // Runs either a worker or a primary.
 async fn run(matches: &ArgMatches<'_>) -> Result<()> {
-    let key_file = matches.value_of("keys").unwrap();
+    let key_file = matches.value_of("keypair").unwrap();
     let committee_file = matches.value_of("committee").unwrap();
     let parameters_file = matches.value_of("parameters");
     let store_path = matches.value_of("store").unwrap();
 
-    // Read the committee and node's keypair from file.
+    // Read the committee and node's keypair and threshold keypair from file.
     let keypair = KeyPair::import(key_file).context("Failed to load the node's keypair")?;
     let committee =
         Committee::import(committee_file).context("Failed to load the committee information")?;
@@ -121,7 +151,17 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 .unwrap()
                 .parse::<WorkerId>()
                 .context("The worker id must be a positive integer")?;
-            Worker::spawn(keypair.name, id, committee, parameters, store);
+            let threshold_key_file = sub_matches.value_of("threshold_keypair").unwrap();
+            let threshold_keypair = ThresholdKeyPair::import(threshold_key_file)
+                .context("Failed to load the node's threshold keypair")?;
+            Worker::spawn(
+                keypair.name,
+                id,
+                threshold_keypair,
+                committee,
+                parameters,
+                store,
+            );
         }
         _ => unreachable!(),
     }

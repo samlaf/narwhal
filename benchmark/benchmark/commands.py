@@ -23,7 +23,15 @@ class CommandMaker:
     @staticmethod
     def generate_key(filename):
         assert isinstance(filename, str)
-        return f'./node generate_keys --filename {filename}'
+        return f'./node generate_keypair --filename {filename}'
+
+    @staticmethod
+    def generate_threshold_keypair(filename, threshold, node_index):
+        assert isinstance(filename, str)
+        assert isinstance(threshold, int)
+        assert isinstance(node_index, int)
+        return (f'./node generate_threshold_keypair --filename {filename} '
+                f'--seed 0 --threshold {threshold} --node_index {node_index}')
 
     @staticmethod
     def run_primary(keys, committee, store, parameters, debug=False):
@@ -32,18 +40,18 @@ class CommandMaker:
         assert isinstance(parameters, str)
         assert isinstance(debug, bool)
         v = '-vvv' if debug else '-vv'
-        return (f'./node {v} run --keys {keys} --committee {committee} '
+        return (f'./node {v} run --keypair {keys} --committee {committee} '
                 f'--store {store} --parameters {parameters} primary')
 
     @staticmethod
-    def run_worker(keys, committee, store, parameters, id, debug=False):
+    def run_worker(keys, threshold_keypair, committee, store, parameters, id, debug=False):
         assert isinstance(keys, str)
         assert isinstance(committee, str)
         assert isinstance(parameters, str)
         assert isinstance(debug, bool)
         v = '-vvv' if debug else '-vv'
-        return (f'./node {v} run --keys {keys} --committee {committee} '
-                f'--store {store} --parameters {parameters} worker --id {id}')
+        return (f'./node {v} run --keypair {keys} --committee {committee} --store {store} '
+                f'--parameters {parameters} worker --id {id} --threshold_keypair {threshold_keypair}')
 
     @staticmethod
     def run_client(address, size, rate, nodes):

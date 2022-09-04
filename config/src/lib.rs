@@ -1,6 +1,8 @@
+use crypto::threshold::{PublicKeySet, SecretKeySet, SecretKeyShare, SerdeSecret};
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crypto::{generate_production_keypair, PublicKey, SecretKey};
 use log::info;
+use rand::SeedableRng;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -267,5 +269,26 @@ impl KeyPair {
 impl Default for KeyPair {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ThresholdKeyPair {
+    /// The node's threshold secret key share (we need the SerdeSecret wrapper for serializability)
+    pub sk_share: SerdeSecret<SecretKeyShare>,
+    /// The threshold public key set (used for decrypting)
+    pub pk_set: PublicKeySet,
+}
+
+impl Import for ThresholdKeyPair {}
+impl Export for ThresholdKeyPair {}
+
+impl ThresholdKeyPair {
+    pub fn new(threshold: usize, node_index: usize, seed: u64) -> Self {
+        let mut rng = rand::prelude::StdRng::seed_from_u64(seed);
+        let sk_set = SecretKeySet::random(threshold, &mut rng);
+        let pk_set = sk_set.public_keys();
+        let sk_share = SerdeSecret(sk_set.secret_key_share(node_index));
+        Self { sk_share, pk_set }
     }
 }

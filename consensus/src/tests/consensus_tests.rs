@@ -1,7 +1,11 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
 use config::{Authority, PrimaryAddresses};
-use crypto::{generate_keypair, SecretKey};
+use crypto::{
+    generate_keypair,
+    threshold::{SecretKeySet, SecretKeyShare},
+    SecretKey,
+};
 use primary::Header;
 use rand::rngs::StdRng;
 use rand::SeedableRng as _;
@@ -16,10 +20,13 @@ fn keys() -> Vec<(PublicKey, SecretKey)> {
 
 // Fixture
 pub fn mock_committee() -> Committee {
+    let mut rng = rand::thread_rng();
+    let sk_set = SecretKeySet::random(1, &mut rng);
     Committee {
         authorities: keys()
             .iter()
-            .map(|(id, _)| {
+            .enumerate()
+            .map(|(i, (id, _))| {
                 (
                     *id,
                     Authority {

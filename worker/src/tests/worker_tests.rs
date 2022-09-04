@@ -9,6 +9,7 @@ use std::fs;
 async fn handle_clients_transactions() {
     let (name, _) = keys().pop().unwrap();
     let id = 0;
+    let threshold_keypair = ThresholdKeyPair::new(1, 0, 0);
     let committee = committee_with_base_port(11_000);
     let parameters = Parameters {
         batch_size: 200, // Two transactions.
@@ -21,7 +22,14 @@ async fn handle_clients_transactions() {
     let store = Store::new(path).unwrap();
 
     // Spawn a `Worker` instance.
-    Worker::spawn(name, id, committee.clone(), parameters, store);
+    Worker::spawn(
+        name,
+        id,
+        threshold_keypair,
+        committee.clone(),
+        parameters,
+        store,
+    );
 
     // Spawn a network listener to receive our batch's digest.
     let primary_address = committee.primary(&name).unwrap().worker_to_primary;
