@@ -4,10 +4,16 @@ use ed25519_dalek::ed25519;
 use ed25519_dalek::Signer as _;
 use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
+use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::ParallelIterator;
 use serde::{de, ser, Deserialize, Serialize};
 use std::array::TryFromSliceError;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
+use threshold_crypto::serde_impl::SerdeSecret;
+use threshold_crypto::Ciphertext;
+use threshold_crypto::DecryptionShare;
+use threshold_crypto::SecretKeyShare;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 
@@ -220,6 +226,9 @@ impl Signature {
     }
 }
 
+pub type NodeIndex = usize;
+pub type NodeDecryptionShares = (NodeIndex, Vec<DecryptionShare>);
+pub type BatchDecryptionShares = Vec<NodeDecryptionShares>;
 /// This service holds the node's private key. It takes digests as input and returns a signature
 /// over the digest (through a oneshot channel).
 #[derive(Clone)]
@@ -228,7 +237,7 @@ pub struct SignatureService {
 }
 
 impl SignatureService {
-    pub fn new(secret: SecretKey) -> Self {
+    pub fn spawn(secret: SecretKey) -> Self {
         let (tx, mut rx): (Sender<(_, oneshot::Sender<_>)>, _) = channel(100);
         tokio::spawn(async move {
             while let Some((digest, sender)) = rx.recv().await {
@@ -242,6 +251,53 @@ impl SignatureService {
     pub async fn request_signature(&mut self, digest: Digest) -> Signature {
         let (sender, receiver): (oneshot::Sender<_>, oneshot::Receiver<_>) = oneshot::channel();
         if let Err(e) = self.channel.send((digest, sender)).await {
+            panic!("Failed to send message Signature Service: {}", e);
+        }
+        receiver
+            .await
+            .expect("Failed to receive signature from Signature Service")
+    }
+}
+
+/// This service holds the node's threshold private key share.
+/// It takes digests an encrypted tx as input and returns a decryption share (through a oneshot channel).
+#[derive(Clone)]
+pub struct ThresholdDecryptionService {
+    channel: Sender<(Vec<Ciphertext>, oneshot::Sender<NodeDecryptionShares>)>,
+}
+
+// We don't use this service anymore because serialized threshold decryption is way too slow
+// Benchmark for encrypt/decrypt 100 msgs
+// sequential threshold encryption time: 6.0480985s
+// sequential threshold decryption time: 13.521142041s
+// parallel threshold encryption time: 846.853208ms
+// parallel threshold decryption time: 1.84121575s
+// We could make this service take a batch of txs and process them in parallel, but then I don't really see this point
+// of having this complicated task + channels structure
+impl ThresholdDecryptionService {
+    pub fn spawn(sk_share: SerdeSecret<SecretKeyShare>, node_index: NodeIndex) -> Self {
+        let (tx, mut rx): (Sender<(Vec<Ciphertext>, oneshot::Sender<_>)>, _) = channel(100);
+        tokio::spawn(async move {
+            while let Some((ciphertexts, sender)) = rx.recv().await {
+                let dec_shares: Vec<DecryptionShare> = ciphertexts
+                    .par_iter()
+                    .map(|ct| {
+                        sk_share
+                            .decrypt_share(ct)
+                            // probably shouldn't crash our program but just return a msg to the sending validator
+                            // that he should clean his batches before sending them out (eg. if user forgets to encrypt tx)
+                            .expect("ciphertext isn't valid")
+                    })
+                    .collect();
+                let _ = sender.send((node_index, dec_shares));
+            }
+        });
+        Self { channel: tx }
+    }
+
+    pub async fn request_decryption(&self, ciphertexts: Vec<Ciphertext>) -> NodeDecryptionShares {
+        let (sender, receiver): (oneshot::Sender<_>, oneshot::Receiver<_>) = oneshot::channel();
+        if let Err(e) = self.channel.send((ciphertexts, sender)).await {
             panic!("Failed to send message Signature Service: {}", e);
         }
         receiver

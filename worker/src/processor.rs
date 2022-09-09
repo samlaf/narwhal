@@ -13,8 +13,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[path = "tests/processor_tests.rs"]
 pub mod processor_tests;
 
-/// Indicates a serialized `WorkerMessage::Batch` message.
-pub type SerializedBatchMessage = Vec<u8>;
+/// Indicates a serialized `WorkerMessage::DecryptableBatch` message.
+pub type SerializedDecryptableBatchMessage = Vec<u8>;
 
 /// Hashes and stores batches, it then outputs the batch's digest.
 pub struct Processor;
@@ -26,7 +26,7 @@ impl Processor {
         // The persistent storage.
         mut store: Store,
         // Input channel to receive batches.
-        mut rx_batch: Receiver<SerializedBatchMessage>,
+        mut rx_batch: Receiver<SerializedDecryptableBatchMessage>,
         // Output channel to send out batches' digests.
         tx_digest: Sender<SerializedBatchDigestMessage>,
         // Whether we are processing our own batches or the batches of other nodes.

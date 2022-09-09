@@ -1,19 +1,21 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::batch_maker::{Batch, BatchMaker, Transaction};
+pub use crate::batch_maker::SerializedCiphertext;
+use crate::batch_maker::{Batch, BatchMaker};
 use crate::helper::Helper;
 use crate::primary_connector::PrimaryConnector;
-use crate::processor::{Processor, SerializedBatchMessage};
+use crate::processor::{Processor, SerializedDecryptableBatchMessage};
 use crate::quorum_waiter::QuorumWaiter;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, Parameters, ThresholdKeyPair, WorkerId};
-use crypto::threshold::SecretKeyShare;
-use crypto::{Digest, PublicKey};
+use crypto::threshold::Ciphertext;
+use crypto::{BatchDecryptionShares, Digest, PublicKey, ThresholdDecryptionService};
 use futures::sink::SinkExt as _;
 use log::{error, info, warn};
 use network::{MessageHandler, Receiver, Writer};
 use primary::PrimaryWorkerMessage;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use store::Store;
@@ -37,6 +39,7 @@ pub type SerializedBatchDigestMessage = Vec<u8>;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum WorkerMessage {
     Batch(Batch),
+    DecryptableBatch(Batch, BatchDecryptionShares),
     BatchRequest(Vec<Digest>, /* origin */ PublicKey),
 }
 
@@ -45,8 +48,6 @@ pub struct Worker {
     name: PublicKey,
     /// The id of this worker.
     id: WorkerId,
-    /// private key share + shared public keyset for decryption
-    pub threshold_keypair: ThresholdKeyPair,
     /// The committee information.
     committee: Committee,
     /// The configuration parameters.
@@ -68,17 +69,24 @@ impl Worker {
         let worker = Self {
             name,
             id,
-            threshold_keypair,
             committee,
             parameters,
             store,
         };
 
+        // Spawn threshold decryption service
+        let threshold_decryption_service = ThresholdDecryptionService::spawn(
+            threshold_keypair.sk_share,
+            threshold_keypair.node_index,
+        );
+
         // Spawn all worker tasks.
         let (tx_primary, rx_primary) = channel(CHANNEL_CAPACITY);
         worker.handle_primary_messages();
-        worker.handle_clients_transactions(tx_primary.clone());
-        worker.handle_workers_messages(tx_primary);
+        // TODO: find a better way to pass the threshold_decryption_service twice than to clone it...
+        worker
+            .handle_clients_transactions(tx_primary.clone(), threshold_decryption_service.clone());
+        worker.handle_workers_messages(tx_primary, threshold_decryption_service);
 
         // The `PrimaryConnector` allows the worker to send messages to its primary.
         PrimaryConnector::spawn(
@@ -140,10 +148,15 @@ impl Worker {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_clients_transactions(&self, tx_primary: Sender<SerializedBatchDigestMessage>) {
+    fn handle_clients_transactions(
+        &self,
+        tx_primary: Sender<SerializedBatchDigestMessage>,
+        threshold_decryption_service: ThresholdDecryptionService,
+    ) {
         let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
         let (tx_quorum_waiter, rx_quorum_waiter) = channel(CHANNEL_CAPACITY);
         let (tx_processor, rx_processor) = channel(CHANNEL_CAPACITY);
+        let (tx_decryptable_batches, rx_decryptable_batches) = channel(CHANNEL_CAPACITY);
 
         // We first receive clients' transactions from the network.
         let mut address = self
@@ -164,6 +177,7 @@ impl Worker {
             self.parameters.batch_size,
             self.parameters.max_batch_delay,
             /* rx_transaction */ rx_batch_maker,
+            rx_decryptable_batches,
             /* tx_message */ tx_quorum_waiter,
             /* workers_addresses */
             self.committee
@@ -178,8 +192,10 @@ impl Worker {
         QuorumWaiter::spawn(
             self.committee.clone(),
             /* stake */ self.committee.stake(&self.name),
+            threshold_decryption_service,
             /* rx_message */ rx_quorum_waiter,
             /* tx_batch */ tx_processor,
+            tx_decryptable_batches,
         );
 
         // The `Processor` hashes and stores the batch. It then forwards the batch's digest to the `PrimaryConnector`
@@ -199,7 +215,11 @@ impl Worker {
     }
 
     /// Spawn all tasks responsible to handle messages from other workers.
-    fn handle_workers_messages(&self, tx_primary: Sender<SerializedBatchDigestMessage>) {
+    fn handle_workers_messages(
+        &self,
+        tx_primary: Sender<SerializedBatchDigestMessage>,
+        threshold_decryption_service: ThresholdDecryptionService,
+    ) {
         let (tx_helper, rx_helper) = channel(CHANNEL_CAPACITY);
         let (tx_processor, rx_processor) = channel(CHANNEL_CAPACITY);
 
@@ -216,6 +236,7 @@ impl Worker {
             WorkerReceiverHandler {
                 tx_helper,
                 tx_processor,
+                threshold_decryption_service,
             },
         );
 
@@ -247,12 +268,14 @@ impl Worker {
 /// Defines how the network receiver handles incoming transactions.
 #[derive(Clone)]
 struct TxReceiverHandler {
-    tx_batch_maker: Sender<Transaction>,
+    tx_batch_maker: Sender<SerializedCiphertext>,
 }
 
 #[async_trait]
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
+        // TODO: figure out why this results in an error....
+        let ciphertext: Ciphertext = bincode::deserialize(&message).unwrap();
         // Send the transaction to the batch maker.
         self.tx_batch_maker
             .send(message.to_vec())
@@ -269,27 +292,43 @@ impl MessageHandler for TxReceiverHandler {
 #[derive(Clone)]
 struct WorkerReceiverHandler {
     tx_helper: Sender<(Vec<Digest>, PublicKey)>,
-    tx_processor: Sender<SerializedBatchMessage>,
+    tx_processor: Sender<SerializedDecryptableBatchMessage>,
+    threshold_decryption_service: ThresholdDecryptionService,
 }
 
 #[async_trait]
 impl MessageHandler for WorkerReceiverHandler {
     async fn dispatch(&self, writer: &mut Writer, serialized: Bytes) -> Result<(), Box<dyn Error>> {
-        // Reply with an ACK.
-        let _ = writer.send(Bytes::from("Ack")).await;
-
         // Deserialize and parse the message.
         match bincode::deserialize(&serialized) {
-            Ok(WorkerMessage::Batch(..)) => self
-                .tx_processor
-                .send(serialized.to_vec())
-                .await
-                .expect("Failed to send batch"),
-            Ok(WorkerMessage::BatchRequest(missing, requestor)) => self
-                .tx_helper
-                .send((missing, requestor))
-                .await
-                .expect("Failed to send batch request"),
+            Ok(WorkerMessage::Batch(txs)) => {
+                let ciphertexts: Vec<Ciphertext> = txs
+                    .par_iter()
+                    .map(|tx| bincode::deserialize(tx).unwrap())
+                    .collect();
+                let dec_shares = self
+                    .threshold_decryption_service
+                    .request_decryption(ciphertexts)
+                    .await;
+                let serialized_dec_shares = Bytes::from(bincode::serialize(&dec_shares)?);
+                writer.send(serialized_dec_shares).await?;
+            }
+            Ok(WorkerMessage::DecryptableBatch(..)) => {
+                // Reply with an ACK. Sender worker is waiting for 2f of these.
+                let _ = writer.send(Bytes::from("Ack")).await;
+                self.tx_processor
+                    .send(serialized.to_vec())
+                    .await
+                    .expect("Failed to send decryptable batch")
+            }
+            Ok(WorkerMessage::BatchRequest(missing, requestor)) => {
+                // Reply with an ACK. (not sure if this is needed.. but it was there so keeping it)
+                let _ = writer.send(Bytes::from("Ack")).await;
+                self.tx_helper
+                    .send((missing, requestor))
+                    .await
+                    .expect("Failed to send batch request")
+            }
             Err(e) => warn!("Serialization error: {}", e),
         }
         Ok(())

@@ -136,7 +136,7 @@ impl Primary {
         );
 
         // The `SignatureService` is used to require signatures on specific digests.
-        let signature_service = SignatureService::new(secret);
+        let signature_service = SignatureService::spawn(secret);
 
         // The `Core` receives and handles headers, votes, and certificates from the other primaries.
         Core::spawn(
@@ -233,6 +233,7 @@ impl MessageHandler for PrimaryReceiverHandler {
                 .send((missing, requestor))
                 .await
                 .expect("Failed to send primary message"),
+            // All other PrimaryMessages (Header, Vote, Certificate) are sent to core for processing
             request => self
                 .tx_primary_messages
                 .send(request)

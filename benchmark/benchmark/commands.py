@@ -18,7 +18,8 @@ class CommandMaker:
 
     @staticmethod
     def compile():
-        return 'cargo build --quiet --release --features benchmark'
+        # return 'cargo build --quiet --release --features benchmark'
+        return 'cargo build --quiet --release'
 
     @staticmethod
     def generate_key(filename):
@@ -26,12 +27,21 @@ class CommandMaker:
         return f'./node generate_keypair --filename {filename}'
 
     @staticmethod
-    def generate_threshold_keypair(filename, threshold, node_index):
+    def generate_threshold_keypair(filename, threshold, node_index, seed):
         assert isinstance(filename, str)
         assert isinstance(threshold, int)
         assert isinstance(node_index, int)
+        assert isinstance(seed, int)
         return (f'./node generate_threshold_keypair --filename {filename} '
-                f'--seed 0 --threshold {threshold} --node_index {node_index}')
+                f'--seed {seed} --threshold {threshold} --node_index {node_index}')
+
+    @staticmethod
+    def generate_threshold_publickey(filename, threshold, seed):
+        assert isinstance(filename, str)
+        assert isinstance(threshold, int)
+        assert isinstance(seed, int)
+        return (f'./node generate_threshold_publickey --filename {filename} '
+                f'--seed {seed} --threshold {threshold}')
 
     @staticmethod
     def run_primary(keys, committee, store, parameters, debug=False):

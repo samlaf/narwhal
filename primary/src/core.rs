@@ -64,6 +64,10 @@ pub struct Core {
     certificates_aggregators: HashMap<Round, Box<CertificatesAggregator>>,
     /// A network sender to send the batches to the other workers.
     network: ReliableSender,
+    // TOUNDERSTAND: understand why we need cancel_handlers. We don't seem to use them anywhere, other than
+    //       to clean them when garbage collecting
+    //       maybe this is b/c ReliableSenders resend their msgs periodically until they receive an ACK
+    //       or the cancel_handler is dropped
     /// Keeps the cancel handlers of the messages we sent.
     cancel_handlers: HashMap<Round, Vec<CancelHandler>>,
 }

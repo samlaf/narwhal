@@ -11,4 +11,5 @@ mod worker;
 #[path = "tests/common.rs"]
 mod common;
 
+pub use crate::worker::SerializedCiphertext;
 pub use crate::worker::Worker;

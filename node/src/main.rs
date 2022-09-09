@@ -1,7 +1,7 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use anyhow::{Context, Result};
 use clap::{crate_name, crate_version, App, AppSettings, ArgMatches, SubCommand};
-use config::Export as _;
+use config::Export;
 use config::Import as _;
 use config::ThresholdKeyPair;
 use config::{Committee, KeyPair, Parameters, WorkerId};
@@ -32,7 +32,14 @@ async fn main() -> Result<()> {
                 .args_from_usage("--filename=<FILE> 'The file where to print the new threshold key shares'")
                 .args_from_usage("--threshold=<INT> 'The threshold number st (threshold+1)/num_shares needed to decrypt'")
                 .args_from_usage("--node_index=<INT> 'The index of the share to generate'")
-                .args_from_usage("--seed=<INT> 'The seed number to generate the threshold keys'")
+                .args_from_usage("--seed=<INT> 'The seed number to generate the threshold keys (use same seed as generate_threshold_publickey)'")
+        )
+        .subcommand(
+            SubCommand::with_name("generate_threshold_publickey")
+                .about("Print seeded threshold public key to file")
+                .args_from_usage("--filename=<FILE> 'The file where to print the new threshold key shares'")
+                .args_from_usage("--threshold=<INT> 'The threshold number st (threshold+1)/num_shares needed to decrypt'")
+                .args_from_usage("--seed=<INT> 'The seed number to generate the threshold keys (use same seed as generate_threshold_keypair)'")
         )
         .subcommand(
             SubCommand::with_name("run")
@@ -88,6 +95,24 @@ async fn main() -> Result<()> {
             ThresholdKeyPair::new(threshold, node_index, seed)
                 .export(sub_matches.value_of("filename").unwrap())
                 .context("Failed to generate threshold keypair")?;
+        }
+        ("generate_threshold_publickey", Some(sub_matches)) => {
+            let threshold = sub_matches
+                .value_of("threshold")
+                .unwrap()
+                .parse::<usize>()
+                .context("threshold must be an integer")?;
+            let seed = sub_matches
+                .value_of("seed")
+                .unwrap()
+                .parse::<u64>()
+                .context("seed must be an integer")?;
+            // reusing this structure just to generate the public key is an ugly hack but this is a hackathon..
+            ThresholdKeyPair::new(threshold, 0, seed)
+                .pk_set
+                .public_key()
+                .export(sub_matches.value_of("filename").unwrap())
+                .context("Failed to generate threshold public key")?;
         }
         ("run", Some(sub_matches)) => run(sub_matches).await?,
         _ => unreachable!(),

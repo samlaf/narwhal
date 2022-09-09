@@ -1,5 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::batch_maker::{Batch, Transaction};
+use crate::batch_maker::{Batch, SerializedCiphertext};
 use crate::worker::WorkerMessage;
 use bytes::Bytes;
 use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
@@ -84,7 +84,7 @@ pub fn committee_with_base_port(base_port: u16) -> Committee {
 }
 
 // Fixture
-pub fn transaction() -> Transaction {
+pub fn transaction() -> SerializedCiphertext {
     vec![0; 100]
 }
 

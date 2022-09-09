@@ -1,3 +1,4 @@
+use crate::processor::SerializedDecryptableBatchMessage;
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crate::quorum_waiter::QuorumWaiterMessage;
 use crate::worker::WorkerMessage;
@@ -9,19 +10,20 @@ use crypto::PublicKey;
 use ed25519_dalek::{Digest as _, Sha512};
 #[cfg(feature = "benchmark")]
 use log::info;
-use network::ReliableSender;
+use network::{CancelHandler, ReliableSender};
 #[cfg(feature = "benchmark")]
 use std::convert::TryInto as _;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration, Instant};
 
 #[cfg(test)]
 #[path = "tests/batch_maker_tests.rs"]
 pub mod batch_maker_tests;
 
-pub type Transaction = Vec<u8>;
-pub type Batch = Vec<Transaction>;
+pub type SerializedCiphertext = Vec<u8>;
+pub type Batch = Vec<SerializedCiphertext>;
 
 /// Assemble clients transactions into batches.
 pub struct BatchMaker {
@@ -30,7 +32,12 @@ pub struct BatchMaker {
     /// The maximum delay after which to seal the batch (in ms).
     max_batch_delay: u64,
     /// Channel to receive transactions from the network.
-    rx_transaction: Receiver<Transaction>,
+    rx_transaction: Receiver<SerializedCiphertext>,
+    /// Channel to receive DecryptableBatches from quorum_waiter.
+    rx_decryptable_batches: Receiver<(
+        SerializedDecryptableBatchMessage,
+        oneshot::Sender<Vec<(PublicKey, CancelHandler)>>,
+    )>,
     /// Output channel to deliver sealed batches to the `QuorumWaiter`.
     tx_message: Sender<QuorumWaiterMessage>,
     /// The network addresses of the other workers that share our worker id.
@@ -47,7 +54,11 @@ impl BatchMaker {
     pub fn spawn(
         batch_size: usize,
         max_batch_delay: u64,
-        rx_transaction: Receiver<Transaction>,
+        rx_transaction: Receiver<SerializedCiphertext>,
+        rx_decryptable_batches: Receiver<(
+            SerializedDecryptableBatchMessage,
+            oneshot::Sender<Vec<(PublicKey, CancelHandler)>>,
+        )>,
         tx_message: Sender<QuorumWaiterMessage>,
         workers_addresses: Vec<(PublicKey, SocketAddr)>,
     ) {
@@ -56,6 +67,7 @@ impl BatchMaker {
                 batch_size,
                 max_batch_delay,
                 rx_transaction,
+                rx_decryptable_batches,
                 tx_message,
                 workers_addresses,
                 current_batch: Batch::with_capacity(batch_size * 2),
@@ -82,6 +94,18 @@ impl BatchMaker {
                         self.seal().await;
                         timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
                     }
+                },
+
+                // If we received decryptable batch from quorum_waiter
+                Some((serialized_decryptable_batch_msg, return_channel)) = self.rx_decryptable_batches.recv() => {
+                    let (names, addresses): (Vec<_>, _) =
+                    self.workers_addresses.iter().cloned().unzip();
+                    let bytes = Bytes::from(serialized_decryptable_batch_msg);
+                    // Broadcast the decryptable shares batch through the network.
+                    let handlers = self.network.broadcast(addresses, bytes).await;
+                    // and return the named handlers to quorum_waiter
+                    let named_handlers = names.into_iter().zip(handlers.into_iter()).collect();
+                    return_channel.send(named_handlers);
                 },
 
                 // If the timer triggers, seal the batch even if it contains few transactions.
@@ -114,9 +138,10 @@ impl BatchMaker {
 
         // Serialize the batch.
         self.current_batch_size = 0;
-        let batch: Vec<_> = self.current_batch.drain(..).collect();
-        let message = WorkerMessage::Batch(batch);
-        let serialized = bincode::serialize(&message).expect("Failed to serialize our own batch");
+        let batch: Batch = self.current_batch.drain(..).collect();
+        let message = WorkerMessage::Batch(batch.clone());
+        let serialized_batch_msg =
+            bincode::serialize(&message).expect("Failed to serialize our own batch");
 
         #[cfg(feature = "benchmark")]
         {
@@ -142,14 +167,17 @@ impl BatchMaker {
 
         // Broadcast the batch through the network.
         let (names, addresses): (Vec<_>, _) = self.workers_addresses.iter().cloned().unzip();
-        let bytes = Bytes::from(serialized.clone());
+        let bytes = Bytes::from(serialized_batch_msg.clone());
         let handlers = self.network.broadcast(addresses, bytes).await;
 
         // Send the batch through the deliver channel for further processing.
         self.tx_message
             .send(QuorumWaiterMessage {
-                batch: serialized,
-                handlers: names.into_iter().zip(handlers.into_iter()).collect(),
+                batch,
+                named_decrypt_shares_handlers: names
+                    .into_iter()
+                    .zip(handlers.into_iter())
+                    .collect(),
             })
             .await
             .expect("Failed to deliver batch");

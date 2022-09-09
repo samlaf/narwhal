@@ -6,7 +6,7 @@ use tokio::sync::mpsc::channel;
 #[tokio::test]
 async fn propose_empty() {
     let (name, secret) = keys().pop().unwrap();
-    let signature_service = SignatureService::new(secret);
+    let signature_service = SignatureService::spawn(secret);
 
     let (_tx_parents, rx_parents) = channel(1);
     let (_tx_our_digests, rx_our_digests) = channel(1);
@@ -34,7 +34,7 @@ async fn propose_empty() {
 #[tokio::test]
 async fn propose_payload() {
     let (name, secret) = keys().pop().unwrap();
-    let signature_service = SignatureService::new(secret);
+    let signature_service = SignatureService::spawn(secret);
 
     let (_tx_parents, rx_parents) = channel(1);
     let (tx_our_digests, rx_our_digests) = channel(1);

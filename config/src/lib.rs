@@ -1,5 +1,7 @@
-use crypto::threshold::{PublicKeySet, SecretKeySet, SecretKeyShare, SerdeSecret};
 // Copyright(C) Facebook, Inc. and its affiliates.
+use crypto::threshold::{
+    PublicKey as ThresholdPublicKey, PublicKeySet, SecretKeySet, SecretKeyShare, SerdeSecret,
+};
 use crypto::{generate_production_keypair, PublicKey, SecretKey};
 use log::info;
 use rand::SeedableRng;
@@ -274,14 +276,13 @@ impl Default for KeyPair {
 
 #[derive(Serialize, Deserialize)]
 pub struct ThresholdKeyPair {
+    // the node's index (1-n)
+    pub node_index: usize,
     /// The node's threshold secret key share (we need the SerdeSecret wrapper for serializability)
     pub sk_share: SerdeSecret<SecretKeyShare>,
     /// The threshold public key set (used for decrypting)
     pub pk_set: PublicKeySet,
 }
-
-impl Import for ThresholdKeyPair {}
-impl Export for ThresholdKeyPair {}
 
 impl ThresholdKeyPair {
     pub fn new(threshold: usize, node_index: usize, seed: u64) -> Self {
@@ -289,6 +290,15 @@ impl ThresholdKeyPair {
         let sk_set = SecretKeySet::random(threshold, &mut rng);
         let pk_set = sk_set.public_keys();
         let sk_share = SerdeSecret(sk_set.secret_key_share(node_index));
-        Self { sk_share, pk_set }
+        Self {
+            node_index,
+            sk_share,
+            pk_set,
+        }
     }
 }
+impl Import for ThresholdKeyPair {}
+impl Export for ThresholdKeyPair {}
+
+impl Import for ThresholdPublicKey {}
+impl Export for ThresholdPublicKey {}

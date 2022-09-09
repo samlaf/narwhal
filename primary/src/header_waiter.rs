@@ -129,7 +129,7 @@ impl HeaderWaiter {
                 Some(message) = self.rx_synchronizer.recv() => {
                     match message {
                         WaiterMessage::SyncBatches(missing, header) => {
-                            debug!("Synching the payload of {}", header);
+                            debug!("Syncing the payload of {}", header);
                             let header_id = header.id.clone();
                             let round = header.round;
                             let author = header.author;

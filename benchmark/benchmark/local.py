@@ -62,16 +62,21 @@ class LocalBench:
             # Generate configuration files.
             names = []
             threshold = int((nodes - 1) / 3 * 2)
+            seed = 0
+            threshold_pk_filename = PathMaker.threshold_pk_file()
+            cmd = CommandMaker.generate_threshold_publickey(
+                threshold_pk_filename, threshold, seed).split()
+            subprocess.run(cmd, check=True)
             for i in range(nodes):
                 key_filename = PathMaker.key_file(i)
                 cmd = CommandMaker.generate_key(key_filename).split()
                 subprocess.run(cmd, check=True)
                 names += [Key.from_file(key_filename).name]
 
-                threshold_key_filename = PathMaker.threshold_key_file(i)
+                threshold_key_filename = PathMaker.threshold_keypair_file(i)
                 # 2f (we require at least 2f+1 to decrypt)
                 cmd = CommandMaker.generate_threshold_keypair(
-                    threshold_key_filename, threshold, i).split()
+                    threshold_key_filename, threshold, i, seed).split()
                 subprocess.run(cmd, check=True)
 
             committee = LocalCommittee(names, self.BASE_PORT, self.workers)
@@ -110,7 +115,7 @@ class LocalBench:
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_worker(
                         PathMaker.key_file(i),
-                        PathMaker.threshold_key_file(i),
+                        PathMaker.threshold_keypair_file(i),
                         PathMaker.committee_file(),
                         PathMaker.db_path(i, id),
                         PathMaker.parameters_file(),

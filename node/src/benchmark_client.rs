@@ -1,8 +1,10 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use anyhow::{Context, Result};
 use bytes::BufMut as _;
+use bytes::Bytes;
 use bytes::BytesMut;
 use clap::{crate_name, crate_version, App, AppSettings};
+use crypto::threshold::{CipherText, PublicKey as ThresholdPublicKey};
 use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
@@ -12,6 +14,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use worker::SerializedCiphertext;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,6 +22,7 @@ async fn main() -> Result<()> {
         .version(crate_version!())
         .about("Benchmark client for Narwhal and Tusk.")
         .args_from_usage("<ADDR> 'The network address of the node where to send txs'")
+        .args_from_usage("--threshold_pk=<FILE> 'The file containing the threshold pk to use to encrypt txs'")
         .args_from_usage("--size=<INT> 'The size of each transaction in bytes'")
         .args_from_usage("--rate=<INT> 'The rate (txs/s) at which to send the transactions'")
         .args_from_usage("--nodes=[ADDR]... 'Network addresses that must be reachable before starting the benchmark.'")
@@ -34,6 +38,11 @@ async fn main() -> Result<()> {
         .unwrap()
         .parse::<SocketAddr>()
         .context("Invalid socket address format")?;
+    let threshold_pk = matches
+        .value_of("threshold_pk")
+        .unwrap()
+        .parse::<ThresholdPublicKey>()
+        .context("Invalid threshold public key format")?;
     let size = matches
         .value_of("size")
         .unwrap()
@@ -62,6 +71,7 @@ async fn main() -> Result<()> {
 
     let client = Client {
         target,
+        threshold_pk,
         size,
         rate,
         nodes,
@@ -76,6 +86,7 @@ async fn main() -> Result<()> {
 
 struct Client {
     target: SocketAddr,
+    threshold_pk: ThresholdPublicKey,
     size: usize,
     rate: u64,
     nodes: Vec<SocketAddr>,
@@ -131,6 +142,9 @@ impl Client {
 
                 tx.resize(self.size, 0u8);
                 let bytes = tx.split().freeze();
+                let ciphertext = self.threshold_pk.encrypt(bytes);
+                let serialized_ciphertext: SerializedCiphertext = bincode::serialize(&ciphertext)?;
+                let bytes = Bytes::from(serialized_ciphertext);
                 if let Err(e) = transport.send(bytes).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;

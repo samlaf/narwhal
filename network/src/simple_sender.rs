@@ -59,6 +59,7 @@ impl SimpleSender {
 
         // Otherwise make a new connection.
         let tx = Self::spawn_connection(address);
+        // TOUNDERSTAND: what happens if the send fails?
         if tx.send(data).await.is_ok() {
             self.connections.insert(address, tx);
         }

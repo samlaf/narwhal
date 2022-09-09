@@ -41,7 +41,7 @@ async fn wait_for_quorum() {
     // Forward the batch along with the handlers to the `QuorumWaiter`.
     let message = QuorumWaiterMessage {
         batch: serialized.clone(),
-        handlers: names.into_iter().zip(handlers.into_iter()).collect(),
+        named_decrypt_shares_handlers: names.into_iter().zip(handlers.into_iter()).collect(),
     };
     tx_message.send(message).await.unwrap();
 

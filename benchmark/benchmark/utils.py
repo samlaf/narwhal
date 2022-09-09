@@ -31,11 +31,15 @@ class PathMaker:
     def key_file(i):
         assert isinstance(i, int) and i >= 0
         return f'.node-{i}-keypair.json'
-    
+
     @staticmethod
-    def threshold_key_file(i):
+    def threshold_keypair_file(i):
         assert isinstance(i, int) and i >= 0
         return f'.node-{i}-threshold-keypair.json'
+
+    @staticmethod
+    def threshold_pk_file():
+        return f'.threshold-pk.json'
 
     @staticmethod
     def db_path(i, j=None):
