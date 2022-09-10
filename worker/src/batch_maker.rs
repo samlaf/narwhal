@@ -9,10 +9,10 @@ use crypto::PublicKey;
 #[cfg(feature = "benchmark")]
 use ed25519_dalek::{Digest as _, Sha512};
 #[cfg(feature = "benchmark")]
-use log::info;
 #[cfg(not(test))]
 use log::{debug, error, info, warn}; // Use log crate when building application
 use network::{CancelHandler, ReliableSender};
+use std::convert::TryInto;
 #[cfg(feature = "benchmark")]
 use std::convert::TryInto as _;
 use std::net::SocketAddr;
@@ -132,19 +132,24 @@ impl BatchMaker {
     async fn seal(&mut self) {
         #[cfg(feature = "benchmark")]
         let size = self.current_batch_size;
-
-        // Look for sample txs (they all start with 0) and gather their txs id (the next 8 bytes).
-        #[cfg(feature = "benchmark")]
-        let tx_ids: Vec<_> = self
-            .current_batch
-            .iter()
-            .filter(|tx| tx[0] == 0u8 && tx.len() > 8)
-            .filter_map(|tx| tx[1..9].try_into().ok())
-            .collect();
-
         // Serialize the batch.
         self.current_batch_size = 0;
         let batch: Batch = self.current_batch.drain(..).collect();
+
+        // Look for sample txs (they all start with 0) and gather their txs id (the next 8 bytes).
+        #[cfg(feature = "benchmark")]
+        let (batch, suffixes): (Vec<_>, Vec<_>) = batch
+            .iter()
+            .map(|tx| tx.split_at(tx.len() - 9))
+            .map(|(left, right)| (left.to_vec(), right.to_vec()))
+            .unzip();
+        #[cfg(feature = "benchmark")]
+        let tx_ids: Vec<[u8; 8]> = suffixes
+            .iter()
+            .filter(|suffix| suffix[0] == 0u8)
+            .filter_map(|suffix| suffix[1..9].try_into().ok())
+            .collect();
+
         let message = WorkerMessage::Batch(batch.clone());
         let serialized_batch_msg =
             bincode::serialize(&message).expect("Failed to serialize our own batch");
@@ -153,7 +158,7 @@ impl BatchMaker {
         {
             // NOTE: This is one extra hash that is only needed to print the following log entries.
             let digest = Digest(
-                Sha512::digest(&serialized).as_slice()[..32]
+                Sha512::digest(&serialized_batch_msg).as_slice()[..32]
                     .try_into()
                     .unwrap(),
             );

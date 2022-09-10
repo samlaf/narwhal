@@ -18,8 +18,7 @@ class CommandMaker:
 
     @staticmethod
     def compile():
-        # return 'cargo build --quiet --release --features benchmark'
-        return 'cargo build --quiet --release'
+        return 'cargo build --quiet --release --features benchmark'
 
     @staticmethod
     def generate_key(filename):
@@ -64,14 +63,15 @@ class CommandMaker:
                 f'--parameters {parameters} worker --id {id} --threshold_keypair {threshold_keypair}')
 
     @staticmethod
-    def run_client(address, size, rate, nodes):
+    def run_client(address, threshold_pk_filename, size, rate, nodes):
         assert isinstance(address, str)
+        assert isinstance(threshold_pk_filename, str)
         assert isinstance(size, int) and size > 0
         assert isinstance(rate, int) and rate >= 0
         assert isinstance(nodes, list)
         assert all(isinstance(x, str) for x in nodes)
         nodes = f'--nodes {" ".join(nodes)}' if nodes else ''
-        return f'./benchmark_client {address} --size {size} --rate {rate} {nodes}'
+        return f'./benchmark_client {address} --threshold_pk {threshold_pk_filename} --size {size} --rate {rate} --nodes {nodes}'
 
     @staticmethod
     def kill():

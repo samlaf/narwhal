@@ -91,9 +91,10 @@ class LocalBench:
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_client(
                         address,
+                        threshold_pk_filename,
                         self.tx_size,
                         rate_share,
-                        [x for y in workers_addresses for _, x in y]
+                        [x for y in workers_addresses for _, x in y],
                     )
                     log_file = PathMaker.client_log_file(i, id)
                     self._background_run(cmd, log_file)
