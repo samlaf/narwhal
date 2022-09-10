@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use crate::common::{batch_digest, committee_with_base_port, keys, listener, serialized_batch};
+use crate::common::{batch_digest, committee_with_base_port, keys, ack_listener, serialized_batch};
 use std::fs;
 use tokio::sync::mpsc::channel;
 
@@ -27,7 +27,7 @@ async fn batch_reply() {
     // Spawn a listener to receive the batch reply.
     let address = committee.worker(&requestor, &id).unwrap().worker_to_worker;
     let expected = Bytes::from(serialized_batch());
-    let handle = listener(address, Some(expected));
+    let handle = ack_listener(address, Some(expected));
 
     // Send a batch request.
     let digests = vec![batch_digest()];

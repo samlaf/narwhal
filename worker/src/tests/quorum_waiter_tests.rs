@@ -1,8 +1,9 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use crate::common::{batch, committee_with_base_port, keys, listener};
+use crate::common::{batch, committee_with_base_port, keys, ack_listener};
 use crate::worker::WorkerMessage;
 use bytes::Bytes;
+use config::ThresholdKeyPair;
 use futures::future::try_join_all;
 use network::ReliableSender;
 use tokio::sync::mpsc::channel;
@@ -14,8 +15,20 @@ async fn wait_for_quorum() {
     let (myself, _) = keys().pop().unwrap();
     let committee = committee_with_base_port(7_000);
 
+    let threshold_keypair = ThresholdKeyPair::new(1, 0, 0);
+    let threshold_decryption_service =
+        ThresholdDecryptionService::spawn(threshold_keypair.sk_share, threshold_keypair.node_index);
+    let (tx_decryptable_batches, rx_decryptable_batches) = channel(1);
+
     // Spawn a `QuorumWaiter` instance.
-    QuorumWaiter::spawn(committee.clone(), /* stake */ 1, rx_message, tx_batch);
+    QuorumWaiter::spawn(
+        committee.clone(),
+        /* stake */ 1,
+        threshold_decryption_service,
+        rx_message,
+        tx_batch,
+        tx_decryptable_batches,
+    );
 
     // Make a batch.
     let message = WorkerMessage::Batch(batch());
@@ -28,7 +41,7 @@ async fn wait_for_quorum() {
     let mut listener_handles = Vec::new();
     for (name, address) in committee.others_workers(&myself, /* id */ &0) {
         let address = address.worker_to_worker;
-        let handle = listener(address, Some(expected.clone()));
+        let handle = ack_listener(address, Some(expected.clone()));
         names.push(name);
         addresses.push(address);
         listener_handles.push(handle);
@@ -40,7 +53,7 @@ async fn wait_for_quorum() {
 
     // Forward the batch along with the handlers to the `QuorumWaiter`.
     let message = QuorumWaiterMessage {
-        batch: serialized.clone(),
+        batch: batch(),
         named_decrypt_shares_handlers: names.into_iter().zip(handlers.into_iter()).collect(),
     };
     tx_message.send(message).await.unwrap();

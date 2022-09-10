@@ -12,12 +12,15 @@ use config::{Committee, Parameters, ThresholdKeyPair, WorkerId};
 use crypto::threshold::Ciphertext;
 use crypto::{BatchDecryptionShares, Digest, PublicKey, ThresholdDecryptionService};
 use futures::sink::SinkExt as _;
-use log::{error, info, warn};
+#[cfg(not(test))]
+use log::{debug, error, info, warn}; // Use log crate when building application
 use network::{MessageHandler, Receiver, Writer};
 use primary::PrimaryWorkerMessage;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+#[cfg(test)]
+use std::{println as info, println as warn, println as error, println as debug};
 use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
 
@@ -274,8 +277,10 @@ struct TxReceiverHandler {
 #[async_trait]
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
-        // TODO: figure out why this results in an error....
-        let ciphertext: Ciphertext = bincode::deserialize(&message).unwrap();
+        // TODO: figure out why this results in an error in benchmarks but not tests....
+        debug!("   worker: (TEST) attempting to decrypt message to ciphertext...");
+        let _ciphertext: Ciphertext = bincode::deserialize(&message).unwrap();
+        debug!("   worker: (TEST)successfully derypted ciphertext");
         // Send the transaction to the batch maker.
         self.tx_batch_maker
             .send(message.to_vec())

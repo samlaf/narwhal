@@ -2,16 +2,19 @@
 use crate::batch_maker::{Batch, SerializedCiphertext};
 use crate::worker::WorkerMessage;
 use bytes::Bytes;
-use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
-use crypto::{generate_keypair, Digest, PublicKey, SecretKey};
+use config::{Authority, Committee, PrimaryAddresses, ThresholdKeyPair, WorkerAddresses};
+use crypto::threshold::Ciphertext;
+use crypto::{generate_keypair, Digest, PublicKey, SecretKey, ThresholdDecryptionService};
 use ed25519_dalek::Digest as _;
 use ed25519_dalek::Sha512;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
 use rand::rngs::StdRng;
 use rand::SeedableRng as _;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use std::convert::TryInto as _;
 use std::net::SocketAddr;
+use std::{println as info, println as warn, println as error, println as debug};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -83,9 +86,18 @@ pub fn committee_with_base_port(base_port: u16) -> Committee {
     committee
 }
 
+pub fn transaction_length() -> usize {
+    let tx = transaction();
+    tx.len()
+}
 // Fixture
 pub fn transaction() -> SerializedCiphertext {
-    vec![0; 100]
+    let threshold_keypair = ThresholdKeyPair::new(1, 0, 0);
+    let pk = threshold_keypair.pk_set.public_key();
+    let msg = vec![0; 100];
+    let ciphertext = pk.encrypt(&msg);
+    let serialized_ciphertext = bincode::serialize(&ciphertext).unwrap();
+    serialized_ciphertext
 }
 
 // Fixture
@@ -109,7 +121,7 @@ pub fn batch_digest() -> Digest {
 }
 
 // Fixture
-pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> {
+pub fn ack_listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let listener = TcpListener::bind(&address).await.unwrap();
         let (socket, _) = listener.accept().await.unwrap();
@@ -123,6 +135,51 @@ pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> 
                 }
             }
             _ => panic!("Failed to receive network message"),
+        }
+    })
+}
+
+// Fixture
+pub fn dec_shares_listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> {
+    let threshold_keypair = ThresholdKeyPair::new(1, 0, 0);
+    let threshold_decryption_service =
+        ThresholdDecryptionService::spawn(threshold_keypair.sk_share, threshold_keypair.node_index);
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(&address).await.unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let transport = Framed::new(socket, LengthDelimitedCodec::new());
+        let (mut writer, mut reader) = transport.split();
+        loop {
+            match reader.next().await {
+                Some(Ok(received)) => {
+                    let msg = received.freeze();
+                    match bincode::deserialize(&msg) {
+                        Ok(WorkerMessage::Batch(txs)) => {
+                            debug!("dec_shares_listener: received workermessage(Batch)");
+                            let ciphertexts: Vec<Ciphertext> = txs
+                                .par_iter()
+                                .map(|tx| bincode::deserialize(tx).unwrap())
+                                .collect();
+                            let dec_shares = threshold_decryption_service
+                                .request_decryption(ciphertexts)
+                                .await;
+                            let serialized_dec_shares =
+                                Bytes::from(bincode::serialize(&dec_shares).unwrap());
+                            debug!("dec_shares_listener: sending back dec shares");
+                            writer.send(serialized_dec_shares).await.unwrap();
+                        }
+                        Ok(WorkerMessage::DecryptableBatch(..)) => {
+                            debug!("dec_shares_listener: received a WorkerMessage::DecryptableBatch, sending back Ack");
+                            writer.send(Bytes::from("Ack")).await.unwrap();
+                        }
+                        _ => debug!("dec_shares_listener: received wrong workermessage!"),
+                    }
+                }
+                _ => {
+                    debug!("dec_shares_listener: Failed to receive network message");
+                    panic!("Failed to receive network message")
+                }
+            }
         }
     })
 }

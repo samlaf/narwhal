@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use crate::common::{batch_digest, committee_with_base_port, keys, listener};
+use crate::common::{batch_digest, committee_with_base_port, keys, ack_listener};
 use std::fs;
 use tokio::sync::mpsc::channel;
 
@@ -36,7 +36,7 @@ async fn synchronize() {
     let missing = vec![batch_digest()];
     let message = WorkerMessage::BatchRequest(missing.clone(), name);
     let serialized = bincode::serialize(&message).unwrap();
-    let handle = listener(address, Some(Bytes::from(serialized)));
+    let handle = ack_listener(address, Some(Bytes::from(serialized)));
 
     // Send a sync request.
     let message = PrimaryWorkerMessage::Synchronize(missing, target);

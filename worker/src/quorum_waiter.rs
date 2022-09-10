@@ -9,8 +9,12 @@ use crypto::{
 };
 use futures::stream::futures_unordered::FuturesUnordered;
 use futures::stream::StreamExt as _;
+#[cfg(not(test))]
+use log::{debug, error, info, warn}; // Use log crate when building application
 use network::CancelHandler;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+#[cfg(test)]
+use std::{println as info, println as warn, println as error, println as debug};
 use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot,
@@ -105,6 +109,7 @@ impl QuorumWaiter {
             named_decrypt_shares_handlers,
         }) = self.rx_message.recv().await
         {
+            debug!("quorum_waiter: received QuorumWaiterMessage(batch)");
             // Step 1. first we decrypt our batch's ciphertexts
             let ciphertexts: Vec<Ciphertext> = batch
                 .par_iter()
@@ -115,6 +120,7 @@ impl QuorumWaiter {
                 .request_decryption(ciphertexts)
                 .await;
             let mut batch_decryption_shares: BatchDecryptionShares = vec![dec_shares];
+            debug!("quorum_waiter: successfully decrypted our shares");
 
             // Then we wrap the handlers in futures
             let mut decrypt_shares_futures: FuturesUnordered<_> = named_decrypt_shares_handlers
@@ -131,9 +137,11 @@ impl QuorumWaiter {
                 None;
             let (sender, receiver): (oneshot::Sender<_>, oneshot::Receiver<_>) = oneshot::channel();
             while let Some(Some((stake, dec_shares))) = decrypt_shares_futures.next().await {
+                debug!("quorum_waiter: received dec_shares");
                 total_stake += stake;
                 batch_decryption_shares.push(dec_shares);
                 if total_stake >= self.committee.quorum_threshold() {
+                    debug!("quorum_waiter: gathered quorum threshold of dec shares!");
                     // Then we broadcast the decryptable_batch back to all nodes
                     let message = WorkerMessage::DecryptableBatch(batch, batch_decryption_shares);
                     let serialized_decryptable_batch =
@@ -161,13 +169,16 @@ impl QuorumWaiter {
                 })
                 .collect();
 
+            
             // Wait for the first 2f nodes to send back an Ack. Then we consider the decryptable batch
             // delivered and we send its digest to the primary (that will include it into
             // the dag). This should reduce the amount of syncing.
             let mut total_stake = self.stake;
+            debug!("quorum_waiter: waiting for 2f acks");
             while let Some(stake) = wait_for_quorum.next().await {
                 total_stake += stake;
                 if total_stake >= self.committee.quorum_threshold() {
+                    debug!("quorum_waiter: gathered quorum of acks!");
                     self.tx_batch
                         .send(serialized_decryptable_batch)
                         .await

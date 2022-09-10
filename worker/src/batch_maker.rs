@@ -10,10 +10,14 @@ use crypto::PublicKey;
 use ed25519_dalek::{Digest as _, Sha512};
 #[cfg(feature = "benchmark")]
 use log::info;
+#[cfg(not(test))]
+use log::{debug, error, info, warn}; // Use log crate when building application
 use network::{CancelHandler, ReliableSender};
 #[cfg(feature = "benchmark")]
 use std::convert::TryInto as _;
 use std::net::SocketAddr;
+#[cfg(test)]
+use std::{println as info, println as warn, println as error, println as debug};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration, Instant};
@@ -88,6 +92,7 @@ impl BatchMaker {
             tokio::select! {
                 // Assemble client transactions into batches of preset size.
                 Some(transaction) = self.rx_transaction.recv() => {
+                    debug!("batch_maker: received tx");
                     self.current_batch_size += transaction.len();
                     self.current_batch.push(transaction);
                     if self.current_batch_size >= self.batch_size {
@@ -102,10 +107,11 @@ impl BatchMaker {
                     self.workers_addresses.iter().cloned().unzip();
                     let bytes = Bytes::from(serialized_decryptable_batch_msg);
                     // Broadcast the decryptable shares batch through the network.
+                    debug!("batch_maker: broadcasting serialized_decryptable_batch_msg to other validators");
                     let handlers = self.network.broadcast(addresses, bytes).await;
                     // and return the named handlers to quorum_waiter
                     let named_handlers = names.into_iter().zip(handlers.into_iter()).collect();
-                    return_channel.send(named_handlers);
+                    return_channel.send(named_handlers).unwrap();
                 },
 
                 // If the timer triggers, seal the batch even if it contains few transactions.
@@ -168,6 +174,7 @@ impl BatchMaker {
         // Broadcast the batch through the network.
         let (names, addresses): (Vec<_>, _) = self.workers_addresses.iter().cloned().unzip();
         let bytes = Bytes::from(serialized_batch_msg.clone());
+        debug!("batch_maker: broadcasting batch to other validators");
         let handlers = self.network.broadcast(addresses, bytes).await;
 
         // Send the batch through the deliver channel for further processing.
