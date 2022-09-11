@@ -26,6 +26,14 @@ class CommandMaker:
         return f'./node generate_keys --filename {filename}'
 
     @staticmethod
+    def generate_threshold_publickey(filename, threshold, seed):
+        assert isinstance(filename, str)
+        assert isinstance(threshold, int)
+        assert isinstance(seed, int)
+        return (f'./node generate_threshold_publickey --filename {filename} '
+                f'--seed {seed} --threshold {threshold}')
+
+    @staticmethod
     def run_primary(keys, committee, store, parameters, debug=False):
         assert isinstance(keys, str)
         assert isinstance(committee, str)
@@ -46,14 +54,15 @@ class CommandMaker:
                 f'--store {store} --parameters {parameters} worker --id {id}')
 
     @staticmethod
-    def run_client(address, size, rate, nodes):
+    def run_client(address, threshold_pk_filename, size, rate, nodes):
         assert isinstance(address, str)
+        assert isinstance(threshold_pk_filename, str)
         assert isinstance(size, int) and size > 0
         assert isinstance(rate, int) and rate >= 0
         assert isinstance(nodes, list)
         assert all(isinstance(x, str) for x in nodes)
         nodes = f'--nodes {" ".join(nodes)}' if nodes else ''
-        return f'./benchmark_client {address} --size {size} --rate {rate} {nodes}'
+        return f'./benchmark_client {address} --threshold_pk {threshold_pk_filename} --size {size} --rate {rate} {nodes}'
 
     @staticmethod
     def kill():

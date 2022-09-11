@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use bytes::BufMut as _;
 use bytes::BytesMut;
 use clap::{crate_name, crate_version, App, AppSettings};
+use config::{Import, ThresholdPublicKey};
 use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
@@ -19,6 +20,7 @@ async fn main() -> Result<()> {
         .version(crate_version!())
         .about("Benchmark client for Narwhal and Tusk.")
         .args_from_usage("<ADDR> 'The network address of the node where to send txs'")
+        .args_from_usage("--threshold_pk=<FILE> 'The file containing the threshold pk to use to encrypt txs'")
         .args_from_usage("--size=<INT> 'The size of each transaction in bytes'")
         .args_from_usage("--rate=<INT> 'The rate (txs/s) at which to send the transactions'")
         .args_from_usage("--nodes=[ADDR]... 'Network addresses that must be reachable before starting the benchmark.'")
@@ -34,6 +36,9 @@ async fn main() -> Result<()> {
         .unwrap()
         .parse::<SocketAddr>()
         .context("Invalid socket address format")?;
+    let threshold_pk_file = matches.value_of("threshold_pk").unwrap();
+    let threshold_pk =
+        ThresholdPublicKey::import(threshold_pk_file).expect("Failed to load threshold public key");
     let size = matches
         .value_of("size")
         .unwrap()
@@ -62,6 +67,7 @@ async fn main() -> Result<()> {
 
     let client = Client {
         target,
+        threshold_pk,
         size,
         rate,
         nodes,
@@ -76,6 +82,7 @@ async fn main() -> Result<()> {
 
 struct Client {
     target: SocketAddr,
+    threshold_pk: ThresholdPublicKey,
     size: usize,
     rate: u64,
     nodes: Vec<SocketAddr>,
@@ -114,22 +121,34 @@ impl Client {
             interval.as_mut().tick().await;
             let now = Instant::now();
 
+            let mut suffix_byte: u8;
+            let mut msg: u64;
             for x in 0..burst {
                 if x == counter % burst {
                     // NOTE: This log entry is used to compute performance.
                     info!("Sending sample transaction {}", counter);
 
-                    tx.put_u8(0u8); // Sample txs start with 0.
-                    tx.put_u64(counter); // This counter identifies the tx.
+                    // see https://www.paradigm.xyz/2022/07/consensus-throughput
+                    // to understand sample txs (used for benchmarking)
+                    suffix_byte = 0u8; // Sample txs start with 0.
+                    msg = counter; // This counter identifies the tx.
                 } else {
                     r += 1;
-                    tx.put_u8(1u8); // Standard txs start with 1.
-                    tx.put_u64(r); // Ensures all clients send different txs.
+                    suffix_byte = 1u8; // Standard txs start with 1.
+                    msg = r; // Ensures all clients send different txs.
                 };
 
-                tx.resize(self.size, 0u8);
-                let bytes = tx.split().freeze();
-                if let Err(e) = transport.send(bytes).await {
+                let ciphertext = self.threshold_pk.encrypt(msg.to_le_bytes());
+                let serialized_ciphertext: Vec<u8> = bincode::serialize(&ciphertext)?;
+                let mut tx_builder = BytesMut::new();
+                tx_builder.extend(serialized_ciphertext);
+                tx_builder.put_u8(suffix_byte);
+                tx_builder.put_u64(msg);
+                let tx = tx_builder.freeze();
+                // The messages we send consist of a serialized ciphertext followed by a suffix_byte
+                // (0 for sample (benchmark) txs and 1 for standard txs) and the msg (8 bytes)
+                // info!("benchmark_client: sending {:?} to target validator", tx);
+                if let Err(e) = transport.send(tx).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
                 }

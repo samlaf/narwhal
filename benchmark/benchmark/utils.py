@@ -61,6 +61,10 @@ class PathMaker:
         return join(PathMaker.logs_path(), f'client-{i}-{j}.log')
 
     @staticmethod
+    def threshold_pk_file():
+        return f'.threshold-pk.json'
+
+    @staticmethod
     def results_path():
         return 'results'
 

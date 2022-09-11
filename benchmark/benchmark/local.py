@@ -73,6 +73,14 @@ class LocalBench:
 
             self.node_parameters.print(PathMaker.parameters_file())
 
+            # Generate threshold_pk_file
+            threshold = 1
+            seed = 0
+            threshold_pk_filename = PathMaker.threshold_pk_file()
+            cmd = CommandMaker.generate_threshold_publickey(
+                threshold_pk_filename, threshold, seed).split()
+            subprocess.run(cmd, check=True)
+
             # Run the clients (they will wait for the nodes to be ready).
             workers_addresses = committee.workers_addresses(self.faults)
             rate_share = ceil(rate / committee.workers())
@@ -80,6 +88,7 @@ class LocalBench:
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_client(
                         address,
+                        threshold_pk_filename,
                         self.tx_size,
                         rate_share,
                         [x for y in workers_addresses for _, x in y]
