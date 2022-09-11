@@ -114,9 +114,8 @@ impl Client {
         );
 
         // Submit all transactions.
-        let burst = self.rate / PRECISION;
         let mut counter = 0;
-        let mut r = rand::thread_rng().gen();
+        let burst = self.rate / PRECISION;
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
         let interval = interval(Duration::from_millis(BURST_DURATION));
         tokio::pin!(interval);
@@ -125,36 +124,13 @@ impl Client {
         info!("Start sending transactions lala");
 
         'main: loop {
+            // we first build the txs because encryption takes time and we don't want this time
+            // to be part of our tps benchmarks
+            let txs = self.build_txs(counter, burst);
             interval.as_mut().tick().await;
             let now = Instant::now();
 
-            let mut suffix_byte: u8;
-            let mut msg: u64;
-            for x in 0..burst {
-                if x == counter % burst {
-                    // NOTE: This log entry is used to compute performance.
-                    info!("Sending sample transaction {}", counter);
-
-                    // see https://www.paradigm.xyz/2022/07/consensus-throughput
-                    // to understand sample txs (used for benchmarking)
-                    suffix_byte = 0u8; // Sample txs start with 0.
-                    msg = counter; // This counter identifies the tx.
-                } else {
-                    r += 1;
-                    suffix_byte = 1u8; // Standard txs start with 1.
-                    msg = r; // Ensures all clients send different txs.
-                };
-
-                let ciphertext = self.threshold_pk.encrypt(msg.to_le_bytes());
-                let serialized_ciphertext: SerializedCiphertext = bincode::serialize(&ciphertext)?;
-                let mut tx_builder = BytesMut::new();
-                tx_builder.extend(serialized_ciphertext);
-                tx_builder.put_u8(suffix_byte);
-                tx_builder.put_u64(msg);
-                let tx = tx_builder.freeze();
-                // The messages we send consist of a serialized ciphertext followed by a suffix_byte
-                // (0 for sample (benchmark) txs and 1 for standard txs) and the msg (8 bytes)
-                // info!("benchmark_client: sending {:?} to target validator", tx);
+            for tx in txs {
                 if let Err(e) = transport.send(tx).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
@@ -180,5 +156,40 @@ impl Client {
             })
         }))
         .await;
+    }
+    pub fn build_txs(&self, counter: u64, burst: u64) -> Vec<Bytes> {
+        let mut txs: Vec<Bytes> = vec![];
+        let mut r = rand::thread_rng().gen();
+        for x in 0..burst {
+            let mut suffix_byte: u8;
+            let mut msg: u64;
+            if x == counter % burst {
+                // NOTE: This log entry is used to compute performance.
+                info!("Sending sample transaction {}", counter);
+
+                // see https://www.paradigm.xyz/2022/07/consensus-throughput
+                // to understand sample txs (used for benchmarking)
+                suffix_byte = 0u8; // Sample txs start with 0.
+                msg = counter; // This counter identifies the tx.
+            } else {
+                r += 1;
+                suffix_byte = 1u8; // Standard txs start with 1.
+                msg = r; // Ensures all clients send different txs.
+            };
+
+            let ciphertext = self.threshold_pk.encrypt(msg.to_le_bytes());
+            let serialized_ciphertext: SerializedCiphertext =
+                bincode::serialize(&ciphertext).unwrap();
+            // The messages we send consist of a serialized ciphertext followed by a suffix_byte
+            // (0 for sample (benchmark) txs and 1 for standard txs) and the msg (8 bytes)
+            // info!("benchmark_client: sending {:?} to target validator", tx);
+            let mut tx_builder = BytesMut::new();
+            tx_builder.extend(serialized_ciphertext);
+            tx_builder.put_u8(suffix_byte);
+            tx_builder.put_u64(msg);
+            let tx = tx_builder.freeze();
+            txs.push(tx);
+        }
+        txs
     }
 }
