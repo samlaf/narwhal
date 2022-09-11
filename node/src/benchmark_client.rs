@@ -154,7 +154,7 @@ impl Client {
                 let tx = tx_builder.freeze();
                 // The messages we send consist of a serialized ciphertext followed by a suffix_byte
                 // (0 for sample (benchmark) txs and 1 for standard txs) and the msg (8 bytes)
-                info!("benchmark_client: sending {:?} to target validator", tx);
+                // info!("benchmark_client: sending {:?} to target validator", tx);
                 if let Err(e) = transport.send(tx).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;

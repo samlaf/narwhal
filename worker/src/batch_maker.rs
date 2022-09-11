@@ -3,7 +3,6 @@ use crate::processor::SerializedDecryptableBatchMessage;
 use crate::quorum_waiter::QuorumWaiterMessage;
 use crate::worker::WorkerMessage;
 use bytes::Bytes;
-#[cfg(feature = "benchmark")]
 use crypto::Digest;
 use crypto::PublicKey;
 #[cfg(feature = "benchmark")]
@@ -12,6 +11,8 @@ use ed25519_dalek::{Digest as _, Sha512};
 #[cfg(not(test))]
 use log::{debug, error, info, warn}; // Use log crate when building application
 use network::{CancelHandler, ReliableSender};
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::convert::TryInto;
 #[cfg(feature = "benchmark")]
 use std::convert::TryInto as _;
@@ -33,6 +34,8 @@ pub type Batch = Vec<SerializedCiphertext>;
 pub struct BatchMaker {
     /// The preferred batch size (in bytes).
     batch_size: usize,
+    /// hack for benchmarking... shouldn't be done this way
+    batch_sizes: VecDeque<usize>,
     /// The maximum delay after which to seal the batch (in ms).
     max_batch_delay: u64,
     /// Channel to receive transactions from the network.
@@ -69,6 +72,7 @@ impl BatchMaker {
         tokio::spawn(async move {
             Self {
                 batch_size,
+                batch_sizes: VecDeque::new(),
                 max_batch_delay,
                 rx_transaction,
                 rx_decryptable_batches,
@@ -106,6 +110,17 @@ impl BatchMaker {
                     let (names, addresses): (Vec<_>, _) =
                     self.workers_addresses.iter().cloned().unzip();
                     let bytes = Bytes::from(serialized_decryptable_batch_msg);
+                    #[cfg(feature = "benchmark")]
+                    {
+                        // NOTE: This is one extra hash that is only needed to print the following log entries.
+                        let digest = Digest(
+                        Sha512::digest(&bytes).as_slice()[..32]
+                            .try_into()
+                            .unwrap(),
+                        );
+                        let size = self.batch_sizes.pop_front().unwrap();
+                        info!("Batch {:?} contains {} B", digest, size);
+                    }
                     // Broadcast the decryptable shares batch through the network.
                     debug!("batch_maker: broadcasting serialized_decryptable_batch_msg to other validators");
                     let handlers = self.network.broadcast(addresses, bytes).await;
@@ -174,6 +189,7 @@ impl BatchMaker {
 
             // NOTE: This log entry is used to compute performance.
             info!("Batch {:?} contains {} B", digest, size);
+            self.batch_sizes.push_back(size);
         }
 
         // Broadcast the batch through the network.

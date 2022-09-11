@@ -277,13 +277,6 @@ struct TxReceiverHandler {
 #[async_trait]
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
-        // TODO: figure out why this results in an error in benchmarks but not tests....
-        debug!(
-            "   worker: (TEST) attempting to decrypt message to ciphertext... message = {:?}",
-            message
-        );
-        let _ciphertext: Ciphertext = bincode::deserialize(&message).unwrap();
-        debug!("   worker: (TEST)successfully derypted ciphertext");
         // Send the transaction to the batch maker.
         self.tx_batch_maker
             .send(message.to_vec())
