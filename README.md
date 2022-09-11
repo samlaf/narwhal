@@ -33,7 +33,7 @@ To perform this benchmark, follow the same steps as outlined in the [Narhwal rep
 ```
 $ cd narwhal/benchmark
 $ pip install -r requirements.txt
-$ fab local
+$ fab local # it will take a while to compile the first time it is ran
 ```
 These same instructions also need to be ran in the [encrypt-client](https://github.com/samlaf/narwhal/tree/encrypt-client) branch to obtain the results for the non threshold-decrypted Narwhal&Tusk.
 
